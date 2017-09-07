@@ -476,19 +476,6 @@
 		};
 /* End PBXContainerItemProxy section */
 
-/* Begin PBXCopyFilesBuildPhase section */
-		D69161501F60159D000DC21B /* Copy Files */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 7;
-			files = (
-			);
-			name = "Copy Files";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
-
 /* Begin PBXFileReference section */
 		044285011BAA3CC700D16268 /* AsyncDisplayKit.modulemap */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.module-map"; path = AsyncDisplayKit.modulemap; sourceTree = "<group>"; };
 		044285051BAA63FE00D16268 /* ASBatchFetching.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = ASBatchFetching.h; sourceTree = "<group>"; };
@@ -2005,8 +1992,6 @@
 				B35061D61B010EDF0018CF92 /* Frameworks */,
 				B35061D71B010EDF0018CF92 /* Headers */,
 				B35061D81B010EDF0018CF92 /* Resources */,
-				D69161501F60159D000DC21B /* Copy Files */,
-				D69161511F60159F000DC21B /* ShellScript */,
 			);
 			buildRules = (
 			);
@@ -2135,21 +2120,6 @@
 			shellPath = /bin/sh;
 			shellScript = "\"${SRCROOT}/Pods/Target Support Files/Pods-AsyncDisplayKitTests/Pods-AsyncDisplayKitTests-frameworks.sh\"\n";
 			showEnvVarsInLog = 0;
-		};
-		D69161511F60159F000DC21B /* ShellScript */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputPaths = (
-				"$(SRCROOT)/../../Build/iOS/PINRemoteImage.framework",
-				"$(SRCROOT)/../../Build/iOS/PINCache.framework",
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "/usr/local/bin/carthage copy-frameworks";
 		};
 /* End PBXShellScriptBuildPhase section */
 
