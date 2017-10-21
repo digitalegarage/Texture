@@ -185,14 +185,30 @@ if (shouldApply) { _layer.layerProperty = (layerValueExpr); } else { ASDisplayNo
 
 - (CGFloat)cornerRadius
 {
-  _bridge_prologue_read;
-  return _getFromLayer(cornerRadius);
+  ASDN::MutexLocker l(__instanceLock__);
+  if (_cornerRoundingType == ASCornerRoundingTypeDefaultSlowCALayer) {
+    return self.layerCornerRadius;
+  } else {
+    return _cornerRadius;
+  }
 }
 
 - (void)setCornerRadius:(CGFloat)newCornerRadius
 {
-  _bridge_prologue_write;
-  _setToLayer(cornerRadius, newCornerRadius);
+  ASDN::MutexLocker l(__instanceLock__);
+  [self updateCornerRoundingWithType:_cornerRoundingType cornerRadius:newCornerRadius];
+}
+
+- (ASCornerRoundingType)cornerRoundingType
+{
+  ASDN::MutexLocker l(__instanceLock__);
+  return _cornerRoundingType;
+}
+
+- (void)setCornerRoundingType:(ASCornerRoundingType)newRoundingType
+{
+  ASDN::MutexLocker l(__instanceLock__);
+  [self updateCornerRoundingWithType:newRoundingType cornerRadius:_cornerRadius];
 }
 
 - (NSString *)contentsGravity
@@ -857,6 +873,21 @@ if (shouldApply) { _layer.layerProperty = (layerValueExpr); } else { ASDisplayNo
 
 @end
 
+@implementation ASDisplayNode (InternalPropertyBridge)
+
+- (CGFloat)layerCornerRadius
+{
+  _bridge_prologue_read;
+  return _getFromLayer(cornerRadius);
+}
+
+- (void)setLayerCornerRadius:(CGFloat)newLayerCornerRadius
+{
+  _bridge_prologue_write;
+  _setToLayer(cornerRadius, newLayerCornerRadius);
+}
+
+@end
 
 #pragma mark - UIViewBridgeAccessibility
 
@@ -873,9 +904,19 @@ if (shouldApply) { _layer.layerProperty = (layerValueExpr); } else { ASDisplayNo
 (_view ? _view.viewAndPendingViewStateProperty : nodeProperty )\
 : ASDisplayNodeGetPendingState(self).viewAndPendingViewStateProperty
 
+// Attributed version of `_getAccessibilityFromViewOrProperty` macro
+#define _getAttributedAccessibilityFromViewOrProperty(nodeProperty, viewAndPendingViewStatePropertyKey) __loaded(self) ? \
+(_view ? (NSAttributedString *)[_view valueForKey: viewAndPendingViewStatePropertyKey] : nodeProperty )\
+: (NSAttributedString *)[ASDisplayNodeGetPendingState(self) valueForKey: viewAndPendingViewStatePropertyKey]
+
 // Helper function to set property values on pending state or view and property if loaded
 #define _setAccessibilityToViewAndProperty(nodeProperty, nodeValueExpr, viewAndPendingViewStateProperty, viewAndPendingViewStateExpr) \
 nodeProperty = nodeValueExpr; _setToViewOnly(viewAndPendingViewStateProperty, viewAndPendingViewStateExpr)
+
+// Attributed version of `_setAccessibilityToViewAndProperty` macro
+#define _setAttributedAccessibilityToViewAndProperty(nodeProperty, nodeValueExpr, viewAndPendingViewStatePropertyKey, viewAndPendingViewStateExpr) \
+nodeProperty = nodeValueExpr; BOOL shouldApply = ASDisplayNodeShouldApplyBridgedWriteToView(self); \
+if (shouldApply) { [_view setValue:(viewAndPendingViewStateExpr) forKey: viewAndPendingViewStatePropertyKey]; } else { [ASDisplayNodeGetPendingState(self) setValue:(viewAndPendingViewStateExpr) forKey:viewAndPendingViewStatePropertyKey]; }
 
 @implementation ASDisplayNode (UIViewBridgeAccessibility)
 
@@ -901,21 +942,22 @@ nodeProperty = nodeValueExpr; _setToViewOnly(viewAndPendingViewStateProperty, vi
 {
   _bridge_prologue_write;
   _setAccessibilityToViewAndProperty(_accessibilityLabel, accessibilityLabel, accessibilityLabel, accessibilityLabel);
-  if (@available(iOS 11.0, *)) {
-    _setAccessibilityToViewAndProperty(_accessibilityAttributedLabel, [[NSAttributedString alloc] initWithString:accessibilityLabel], accessibilityAttributedLabel, [[NSAttributedString alloc] initWithString:accessibilityLabel]);
+  if (AS_AT_LEAST_IOS11) {
+    NSAttributedString *accessibilityAttributedLabel = accessibilityLabel ? [[NSAttributedString alloc] initWithString:accessibilityLabel] : nil;
+    _setAttributedAccessibilityToViewAndProperty(_accessibilityAttributedLabel, accessibilityAttributedLabel, @"accessibilityAttributedLabel", accessibilityAttributedLabel);
   }
 }
 
 - (NSAttributedString *)accessibilityAttributedLabel
 {
   _bridge_prologue_read;
-  return _getAccessibilityFromViewOrProperty(_accessibilityAttributedLabel, accessibilityAttributedLabel);
+  return _getAttributedAccessibilityFromViewOrProperty(_accessibilityAttributedLabel, @"accessibilityAttributedLabel");
 }
 
 - (void)setAccessibilityAttributedLabel:(NSAttributedString *)accessibilityAttributedLabel
 {
   _bridge_prologue_write;
-  { _setAccessibilityToViewAndProperty(_accessibilityAttributedLabel, accessibilityAttributedLabel, accessibilityAttributedLabel, accessibilityAttributedLabel); }
+  { _setAttributedAccessibilityToViewAndProperty(_accessibilityAttributedLabel, accessibilityAttributedLabel, @"accessibilityAttributedLabel", accessibilityAttributedLabel); }
   { _setAccessibilityToViewAndProperty(_accessibilityLabel, accessibilityAttributedLabel.string, accessibilityLabel, accessibilityAttributedLabel.string); }
 }
 
@@ -929,21 +971,22 @@ nodeProperty = nodeValueExpr; _setToViewOnly(viewAndPendingViewStateProperty, vi
 {
   _bridge_prologue_write;
   _setAccessibilityToViewAndProperty(_accessibilityHint, accessibilityHint, accessibilityHint, accessibilityHint);
-  if (@available(iOS 11.0, *)) {
-    _setAccessibilityToViewAndProperty(_accessibilityAttributedHint, [[NSAttributedString alloc] initWithString:accessibilityHint], accessibilityAttributedHint, [[NSAttributedString alloc] initWithString:accessibilityHint]);
+  if (AS_AT_LEAST_IOS11) {
+    NSAttributedString *accessibilityAttributedHint = accessibilityHint ? [[NSAttributedString alloc] initWithString:accessibilityHint] : nil;
+    _setAttributedAccessibilityToViewAndProperty(_accessibilityAttributedHint, accessibilityAttributedHint, @"accessibilityAttributedHint", accessibilityAttributedHint);
   }
 }
 
 - (NSAttributedString *)accessibilityAttributedHint
 {
   _bridge_prologue_read;
-  return _getAccessibilityFromViewOrProperty(_accessibilityAttributedHint, accessibilityAttributedHint);
+  return _getAttributedAccessibilityFromViewOrProperty(_accessibilityAttributedHint, @"accessibilityAttributedHint");
 }
 
 - (void)setAccessibilityAttributedHint:(NSAttributedString *)accessibilityAttributedHint
 {
   _bridge_prologue_write;
-  { _setAccessibilityToViewAndProperty(_accessibilityAttributedHint, accessibilityAttributedHint, accessibilityAttributedHint, accessibilityAttributedHint); }
+  { _setAttributedAccessibilityToViewAndProperty(_accessibilityAttributedHint, accessibilityAttributedHint, @"accessibilityAttributedHint", accessibilityAttributedHint); }
   { _setAccessibilityToViewAndProperty(_accessibilityHint, accessibilityAttributedHint.string, accessibilityHint, accessibilityAttributedHint.string); }
 }
 
@@ -957,21 +1000,22 @@ nodeProperty = nodeValueExpr; _setToViewOnly(viewAndPendingViewStateProperty, vi
 {
   _bridge_prologue_write;
   _setAccessibilityToViewAndProperty(_accessibilityValue, accessibilityValue, accessibilityValue, accessibilityValue);
-  if (@available(iOS 11.0, *)) {
-    _setAccessibilityToViewAndProperty(_accessibilityAttributedValue, [[NSAttributedString alloc] initWithString:accessibilityValue], accessibilityAttributedValue, [[NSAttributedString alloc] initWithString:accessibilityValue]);
+  if (AS_AT_LEAST_IOS11) {
+    NSAttributedString *accessibilityAttributedValue = accessibilityValue ? [[NSAttributedString alloc] initWithString:accessibilityValue] : nil;
+    _setAttributedAccessibilityToViewAndProperty(_accessibilityAttributedValue, accessibilityAttributedValue, @"accessibilityAttributedValue", accessibilityAttributedValue);
   }
 }
 
 - (NSAttributedString *)accessibilityAttributedValue
 {
   _bridge_prologue_read;
-  return _getAccessibilityFromViewOrProperty(_accessibilityAttributedValue, accessibilityAttributedValue);
+  return _getAttributedAccessibilityFromViewOrProperty(_accessibilityAttributedValue, @"accessibilityAttributedValue");
 }
 
 - (void)setAccessibilityAttributedValue:(NSAttributedString *)accessibilityAttributedValue
 {
   _bridge_prologue_write;
-  { _setAccessibilityToViewAndProperty(_accessibilityAttributedValue, accessibilityAttributedValue, accessibilityAttributedValue, accessibilityAttributedValue); }
+  { _setAttributedAccessibilityToViewAndProperty(_accessibilityAttributedValue, accessibilityAttributedValue, @"accessibilityAttributedValue", accessibilityAttributedValue); }
   { _setAccessibilityToViewAndProperty(_accessibilityValue, accessibilityAttributedValue.string, accessibilityValue, accessibilityAttributedValue.string); }
 }
 
