@@ -2,17 +2,9 @@
 //  ASEventLog.mm
 //  Texture
 //
-//  Copyright (c) 2014-present, Facebook, Inc.  All rights reserved.
-//  This source code is licensed under the BSD-style license found in the
-//  LICENSE file in the /ASDK-Licenses directory of this source tree. An additional
-//  grant of patent rights can be found in the PATENTS file in the same directory.
-//
-//  Modifications to this file made after 4/13/2017 are: Copyright (c) 2017-present,
-//  Pinterest, Inc.  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
+//  Copyright (c) Facebook, Inc. and its affiliates.  All rights reserved.
+//  Changes after 4/13/2017 are: Copyright (c) Pinterest, Inc.  All rights reserved.
+//  Licensed under Apache 2.0: http://www.apache.org/licenses/LICENSE-2.0
 //
 
 #import <AsyncDisplayKit/ASEventLog.h>
@@ -21,7 +13,7 @@
 #import <AsyncDisplayKit/ASObjectDescriptionHelpers.h>
 
 @implementation ASEventLog {
-  ASDN::RecursiveMutex __instanceLock__;
+  AS::RecursiveMutex __instanceLock__;
 
   // The index of the most recent log entry. -1 until first entry.
   NSInteger _eventLogHead;
@@ -69,7 +61,7 @@
                                                       arguments:args];
   va_end(args);
 
-  ASDN::MutexLocker l(__instanceLock__);
+  AS::MutexLocker l(__instanceLock__);
   NSCache *cache = [ASEventLog contentsCache];
   NSMutableArray<ASTraceEvent *> *events = [cache objectForKey:self];
   if (events == nil) {
@@ -95,7 +87,7 @@
     return nil;
   }
 
-  ASDN::MutexLocker l(__instanceLock__);
+  AS::MutexLocker l(__instanceLock__);
   NSUInteger tail = (_eventLogHead + 1);
   NSUInteger count = events.count;
   

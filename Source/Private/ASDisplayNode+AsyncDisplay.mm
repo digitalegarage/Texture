@@ -2,17 +2,9 @@
 //  ASDisplayNode+AsyncDisplay.mm
 //  Texture
 //
-//  Copyright (c) 2014-present, Facebook, Inc.  All rights reserved.
-//  This source code is licensed under the BSD-style license found in the
-//  LICENSE file in the /ASDK-Licenses directory of this source tree. An additional
-//  grant of patent rights can be found in the PATENTS file in the same directory.
-//
-//  Modifications to this file made after 4/13/2017 are: Copyright (c) 2017-present,
-//  Pinterest, Inc.  Licensed under the Apache License, Version 2.0 (the "License");
-//  you may not use this file except in compliance with the License.
-//  You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
+//  Copyright (c) Facebook, Inc. and its affiliates.  All rights reserved.
+//  Changes after 4/13/2017 are: Copyright (c) Pinterest, Inc.  All rights reserved.
+//  Licensed under Apache 2.0: http://www.apache.org/licenses/LICENSE-2.0
 //
 
 #import <AsyncDisplayKit/_ASCoreAnimationExtras.h>
@@ -20,11 +12,13 @@
 #import <AsyncDisplayKit/_ASDisplayLayer.h>
 #import <AsyncDisplayKit/ASAssert.h>
 #import <AsyncDisplayKit/ASDisplayNodeInternal.h>
-#import <AsyncDisplayKit/ASDisplayNode+FrameworkSubclasses.h>
+#import <AsyncDisplayKit/ASDisplayNode+FrameworkPrivate.h>
+#import <AsyncDisplayKit/ASGraphicsContext.h>
 #import <AsyncDisplayKit/ASInternalHelpers.h>
 #import <AsyncDisplayKit/ASSignpost.h>
 #import <AsyncDisplayKit/ASDisplayNodeExtras.h>
 
+using AS::MutexLocker;
 
 @interface ASDisplayNode () <_ASDisplayLayerDelegate>
 @end
@@ -207,7 +201,7 @@
 
   if (shouldBeginRasterizing) {
     // Collect displayBlocks for all descendants.
-    NSMutableArray *displayBlocks = [NSMutableArray array];
+    NSMutableArray *displayBlocks = [[NSMutableArray alloc] init];
     [self _recursivelyRasterizeSelfAndSublayersWithIsCancelledBlock:isCancelledBlock displayBlocks:displayBlocks];
     CHECK_CANCELLED_AND_RETURN_NIL();
     
@@ -218,15 +212,14 @@
     displayBlock = ^id{
       CHECK_CANCELLED_AND_RETURN_NIL();
       
-      UIGraphicsBeginImageContextWithOptions(bounds.size, opaque, contentsScaleForDisplay);
+      ASGraphicsBeginImageContextWithOptions(bounds.size, opaque, contentsScaleForDisplay);
 
       for (dispatch_block_t block in displayBlocks) {
-        CHECK_CANCELLED_AND_RETURN_NIL(UIGraphicsEndImageContext());
+        CHECK_CANCELLED_AND_RETURN_NIL(ASGraphicsEndImageContext());
         block();
       }
       
-      UIImage *image = UIGraphicsGetImageFromCurrentImageContext();
-      UIGraphicsEndImageContext();
+      UIImage *image = ASGraphicsGetImageAndEndCurrentContext();
 
       ASDN_DELAY_FOR_DISPLAY();
       return image;
@@ -236,13 +229,18 @@
       CHECK_CANCELLED_AND_RETURN_NIL();
 
       if (shouldCreateGraphicsContext) {
-        UIGraphicsBeginImageContextWithOptions(bounds.size, opaque, contentsScaleForDisplay);
-        CHECK_CANCELLED_AND_RETURN_NIL( UIGraphicsEndImageContext(); );
+        ASGraphicsBeginImageContextWithOptions(bounds.size, opaque, contentsScaleForDisplay);
+        CHECK_CANCELLED_AND_RETURN_NIL( ASGraphicsEndImageContext(); );
       }
 
       CGContextRef currentContext = UIGraphicsGetCurrentContext();
       UIImage *image = nil;
-      
+
+      if (shouldCreateGraphicsContext && !currentContext) {
+        ASDisplayNodeAssert(NO, @"Failed to create a CGContext (size: %@)", NSStringFromCGSize(bounds.size));
+        return nil;
+      }
+
       // For -display methods, we don't have a context, and thus will not call the _willDisplayNodeContentWithRenderingContext or
       // _didDisplayNodeContentWithRenderingContext blocks. It's up to the implementation of -display... to do what it needs.
       [self __willDisplayNodeContentWithRenderingContext:currentContext drawParameters:drawParameters];
@@ -256,9 +254,8 @@
       [self __didDisplayNodeContentWithRenderingContext:currentContext image:&image drawParameters:drawParameters backgroundColor:backgroundColor borderWidth:borderWidth borderColor:borderColor];
       
       if (shouldCreateGraphicsContext) {
-        CHECK_CANCELLED_AND_RETURN_NIL( UIGraphicsEndImageContext(); );
-        image = UIGraphicsGetImageFromCurrentImageContext();
-        UIGraphicsEndImageContext();
+        CHECK_CANCELLED_AND_RETURN_NIL( ASGraphicsEndImageContext(); );
+        image = ASGraphicsGetImageAndEndCurrentContext();
       }
 
       ASDN_DELAY_FOR_DISPLAY();
@@ -290,13 +287,15 @@
       ASCornerRoundingType cornerRoundingType = _cornerRoundingType;
       CGFloat cornerRadius = _cornerRadius;
       ASDisplayNodeContextModifier willDisplayNodeContentWithRenderingContext = _willDisplayNodeContentWithRenderingContext;
+      CACornerMask maskedCorners = _maskedCorners;
     __instanceLock__.unlock();
 
     if (cornerRoundingType == ASCornerRoundingTypePrecomposited && cornerRadius > 0.0) {
       ASDisplayNodeAssert(context == UIGraphicsGetCurrentContext(), @"context is expected to be pushed on UIGraphics stack %@", self);
       // TODO: This clip path should be removed if we are rasterizing.
       CGRect boundingBox = CGContextGetClipBoundingBox(context);
-      [[UIBezierPath bezierPathWithRoundedRect:boundingBox cornerRadius:cornerRadius] addClip];
+      CGSize radii = CGSizeMake(cornerRadius, cornerRadius);
+      [[UIBezierPath bezierPathWithRoundedRect:boundingBox byRoundingCorners:maskedCorners cornerRadii:radii] addClip];
     }
     
     if (willDisplayNodeContentWithRenderingContext) {
@@ -316,6 +315,7 @@
     CGFloat cornerRadius = _cornerRadius;
     CGFloat contentsScale = _contentsScaleForDisplay;
     ASDisplayNodeContextModifier didDisplayNodeContentWithRenderingContext = _didDisplayNodeContentWithRenderingContext;
+    CACornerMask maskedCorners = _maskedCorners;
   __instanceLock__.unlock();
   
   if (context != NULL) {
@@ -332,7 +332,7 @@
       bounds.size.height *= contentsScale;
       CGFloat white = 0.0f, alpha = 0.0f;
       [backgroundColor getWhite:&white alpha:&alpha];
-      UIGraphicsBeginImageContextWithOptions(bounds.size, (alpha == 1.0f), contentsScale);
+      ASGraphicsBeginImageContextWithOptions(bounds.size, (alpha == 1.0f), contentsScale);
       [*image drawInRect:bounds];
     } else {
       bounds = CGContextGetClipBoundingBox(context);
@@ -341,7 +341,10 @@
     ASDisplayNodeAssert(UIGraphicsGetCurrentContext(), @"context is expected to be pushed on UIGraphics stack %@", self);
     
     UIBezierPath *roundedHole = [UIBezierPath bezierPathWithRect:bounds];
-    [roundedHole appendPath:[UIBezierPath bezierPathWithRoundedRect:bounds cornerRadius:cornerRadius * contentsScale]];
+    CGSize radii = CGSizeMake(cornerRadius * contentsScale, cornerRadius * contentsScale);
+    [roundedHole appendPath:[UIBezierPath bezierPathWithRoundedRect:bounds
+                                                  byRoundingCorners:maskedCorners
+                                                        cornerRadii:radii]];
     roundedHole.usesEvenOddFillRule = YES;
     
     UIBezierPath *roundedPath = nil;
@@ -362,8 +365,7 @@
     [roundedPath stroke];  // Won't do anything if borderWidth is 0 and roundedPath is nil.
     
     if (*image) {
-      *image = UIGraphicsGetImageFromCurrentImageContext();
-      UIGraphicsEndImageContext();
+      *image = ASGraphicsGetImageAndEndCurrentContext();
     }
   }
 }
@@ -472,25 +474,25 @@
 
 - (ASDisplayNodeContextModifier)willDisplayNodeContentWithRenderingContext
 {
-  ASDN::MutexLocker l(__instanceLock__);
+  MutexLocker l(__instanceLock__);
   return _willDisplayNodeContentWithRenderingContext;
 }
 
 - (ASDisplayNodeContextModifier)didDisplayNodeContentWithRenderingContext
 {
-  ASDN::MutexLocker l(__instanceLock__);
+  MutexLocker l(__instanceLock__);
   return _didDisplayNodeContentWithRenderingContext;
 }
 
 - (void)setWillDisplayNodeContentWithRenderingContext:(ASDisplayNodeContextModifier)contextModifier
 {
-  ASDN::MutexLocker l(__instanceLock__);
+  MutexLocker l(__instanceLock__);
   _willDisplayNodeContentWithRenderingContext = contextModifier;
 }
 
 - (void)setDidDisplayNodeContentWithRenderingContext:(ASDisplayNodeContextModifier)contextModifier;
 {
-  ASDN::MutexLocker l(__instanceLock__);
+  MutexLocker l(__instanceLock__);
   _didDisplayNodeContentWithRenderingContext = contextModifier;
 }
 
