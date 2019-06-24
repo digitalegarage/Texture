@@ -8,7 +8,6 @@
 //
 
 #import <AsyncDisplayKit/ASAvailability.h>
-#import <AsyncDisplayKit/ASCollections.h>
 #import <AsyncDisplayKit/ASDisplayNodeExtras.h>
 #import <AsyncDisplayKit/ASDisplayNodeInternal.h>
 #import <AsyncDisplayKit/ASDisplayNode+FrameworkPrivate.h>
@@ -17,24 +16,6 @@
 #import <AsyncDisplayKit/ASLayout.h>
 #import <AsyncDisplayKit/ASLayoutElementStylePrivate.h>
 #import <AsyncDisplayKit/ASLog.h>
-#import <AsyncDisplayKit/ASNodeController+Beta.h>
-#import <AsyncDisplayKit/ASDisplayNode+Yoga.h>
-#import <AsyncDisplayKit/NSArray+Diffing.h>
-
-using AS::MutexLocker;
-
-@interface ASDisplayNode (ASLayoutElementStyleDelegate) <ASLayoutElementStyleDelegate>
-@end
-
-@implementation ASDisplayNode (ASLayoutElementStyleDelegate)
-
-#pragma mark <ASLayoutElementStyleDelegate>
-
-- (void)style:(ASLayoutElementStyle *)style propertyDidChange:(NSString *)propertyName {
-  [self setNeedsLayout];
-}
-
-@end
 
 #pragma mark - ASDisplayNode (ASLayoutElement)
 
@@ -44,7 +25,7 @@ using AS::MutexLocker;
 
 - (BOOL)implementsLayoutMethod
 {
-  MutexLocker l(__instanceLock__);
+  ASDN::MutexLocker l(__instanceLock__);
   return (_methodOverrides & (ASDisplayNodeMethodOverrideLayoutSpecThatFits |
                               ASDisplayNodeMethodOverrideCalcLayoutThatFits |
                               ASDisplayNodeMethodOverrideCalcSizeThatFits)) != 0 || _layoutSpecBlock != nil;
@@ -53,7 +34,7 @@ using AS::MutexLocker;
 
 - (ASLayoutElementStyle *)style
 {
-  MutexLocker l(__instanceLock__);
+  ASDN::MutexLocker l(__instanceLock__);
   return [self _locked_style];
 }
 
@@ -61,12 +42,7 @@ using AS::MutexLocker;
 {
   DISABLED_ASAssertLocked(__instanceLock__);
   if (_style == nil) {
-#if YOGA
-    // In Yoga mode we use the delegate to inform the tree if properties changes
-    _style = [[ASLayoutElementStyle alloc] initWithDelegate:self];
-#else
     _style = [[ASLayoutElementStyle alloc] init];
-#endif
   }
   return _style;
 }
@@ -90,7 +66,7 @@ using AS::MutexLocker;
 
 - (ASLayout *)layoutThatFits:(ASSizeRange)constrainedSize parentSize:(CGSize)parentSize
 {
-  ASScopedLockSelfOrToRoot();
+  ASDN::MutexLocker l(__instanceLock__);
 
   // If one or multiple layout transitions are in flight it still can happen that layout information is requested
   // on other threads. As the pending and calculated layout to be updated in the layout transition in here just a
@@ -128,17 +104,15 @@ ASLayoutElementStyleExtensibilityForwarding
 
 - (ASPrimitiveTraitCollection)primitiveTraitCollection
 {
-  AS::MutexLocker l(__instanceLock__);
-  return _primitiveTraitCollection;
+  return _primitiveTraitCollection.load();
 }
 
 - (void)setPrimitiveTraitCollection:(ASPrimitiveTraitCollection)traitCollection
 {
-  AS::UniqueLock l(__instanceLock__);
-  if (ASPrimitiveTraitCollectionIsEqualToASPrimitiveTraitCollection(traitCollection, _primitiveTraitCollection) == NO) {
+  if (ASPrimitiveTraitCollectionIsEqualToASPrimitiveTraitCollection(traitCollection, _primitiveTraitCollection.load()) == NO) {
     _primitiveTraitCollection = traitCollection;
+    ASDisplayNodeLogEvent(self, @"asyncTraitCollectionDidChange: %@", NSStringFromASPrimitiveTraitCollection(traitCollection));
 
-    l.unlock();
     [self asyncTraitCollectionDidChange];
   }
 }
@@ -174,7 +148,7 @@ ASLayoutElementStyleExtensibilityForwarding
 - (ASLayoutEngineType)layoutEngineType
 {
 #if YOGA
-  MutexLocker l(__instanceLock__);
+  ASDN::MutexLocker l(__instanceLock__);
   YGNodeRef yogaNode = _style.yogaNode;
   BOOL hasYogaParent = (_yogaParent != nil);
   BOOL hasYogaChildren = (_yogaChildren.count > 0);
@@ -188,13 +162,13 @@ ASLayoutElementStyleExtensibilityForwarding
 
 - (ASLayout *)calculatedLayout
 {
-  MutexLocker l(__instanceLock__);
+  ASDN::MutexLocker l(__instanceLock__);
   return _calculatedDisplayNodeLayout.layout;
 }
 
 - (CGSize)calculatedSize
 {
-  MutexLocker l(__instanceLock__);
+  ASDN::MutexLocker l(__instanceLock__);
   if (_pendingDisplayNodeLayout.isValid(_layoutVersion)) {
     return _pendingDisplayNodeLayout.layout.size;
   }
@@ -203,7 +177,7 @@ ASLayoutElementStyleExtensibilityForwarding
 
 - (ASSizeRange)constrainedSizeForCalculatedLayout
 {
-  MutexLocker l(__instanceLock__);
+  ASDN::MutexLocker l(__instanceLock__);
   return [self _locked_constrainedSizeForCalculatedLayout];
 }
 
@@ -267,11 +241,11 @@ ASLayoutElementStyleExtensibilityForwarding
   }
 }
 
-// TODO It would be easier to work with if we could `ASAssertUnlocked` here, but we
-// cannot due to locking to root in `_u_measureNodeWithBoundsIfNecessary`.
 - (void)_rootNodeDidInvalidateSize
 {
   ASDisplayNodeAssertThreadAffinity(self);
+  DISABLED_ASAssertUnlocked(__instanceLock__);
+  
   __instanceLock__.lock();
   
   // We are the root node and need to re-flow the layout; at least one child needs a new size.
@@ -297,21 +271,11 @@ ASLayoutElementStyleExtensibilityForwarding
   }
 }
 
-// TODO
-// We should remove this logic, which is relatively new, and instead
-// rely on the parent / host of the root node to do this size change. That's always been the
-// expectation with other node containers like ASTableView, ASCollectionView, ASViewController, etc.
-// E.g. in ASCellNode the _interactionDelegate is a Table or Collection that will resize in this
-// case. By resizing without participating with the parent, we could get cases where our parent size
-// does not match, especially if there is a size constraint that is applied at that level.
-//
-// In general a node should never need to set its own size, instead allowing its parent to do so -
-// even in the root case. Anyhow this is a separate / pre-existing issue, but I think it could be
-// causing real issues in cases of resizing nodes.
 - (void)displayNodeDidInvalidateSizeNewSize:(CGSize)size
 {
   ASDisplayNodeAssertThreadAffinity(self);
-
+  DISABLED_ASAssertUnlocked(__instanceLock__);
+  
   // The default implementation of display node changes the size of itself to the new size
   CGRect oldBounds = self.bounds;
   CGSize oldSize = oldBounds.size;
@@ -333,8 +297,8 @@ ASLayoutElementStyleExtensibilityForwarding
 - (void)_u_measureNodeWithBoundsIfNecessary:(CGRect)bounds
 {
   DISABLED_ASAssertUnlocked(__instanceLock__);
-  ASScopedLockSelfOrToRoot();
 
+  ASDN::MutexLocker l(__instanceLock__);
   // Check if we are a subnode in a layout transition.
   // In this case no measurement is needed as it's part of the layout transition
   if ([self _locked_isLayoutTransitionInvalid]) {
@@ -368,8 +332,8 @@ ASLayoutElementStyleExtensibilityForwarding
   as_log_verbose(ASLayoutLog(), "Node %@, bounds size %@, calculatedSize %@, calculatedIsDirty %d",
                  self,
                  NSStringFromCGSize(boundsSizeForLayout),
-                 NSStringFromCGSize(_calculatedDisplayNodeLayout.layout.size),
-                 _calculatedDisplayNodeLayout.version < _layoutVersion);
+                 NSStringFromCGSize(_calculatedDisplayNodeLayout->layout.size),
+                 _calculatedDisplayNodeLayout->version < _layoutVersion);
   // _calculatedDisplayNodeLayout is not reusable we need to transition to a new one
   [self cancelLayoutTransition];
 
@@ -393,9 +357,9 @@ ASLayoutElementStyleExtensibilityForwarding
   } else if (!nextLayout.isValid(_layoutVersion)) {
     as_log_verbose(ASLayoutLog(), "Pending layout is stale.");
   } else if (layoutSizeDifferentFromBounds) {
-    as_log_verbose(ASLayoutLog(), "Pending layout size %@ doesn't match bounds size.", NSStringFromCGSize(nextLayout.layout.size));
+    as_log_verbose(ASLayoutLog(), "Pending layout size %@ doesn't match bounds size.", NSStringFromCGSize(nextLayout->layout.size));
   } else {
-    as_log_verbose(ASLayoutLog(), "Using pending layout %@.", nextLayout.layout);
+    as_log_verbose(ASLayoutLog(), "Using pending layout %@.", nextLayout->layout);
     pendingLayoutApplicable = YES;
   }
 
@@ -404,19 +368,9 @@ ASLayoutElementStyleExtensibilityForwarding
     // Use the last known constrainedSize passed from a parent during layout (if never, use bounds).
     NSUInteger version = _layoutVersion;
     ASSizeRange constrainedSize = [self _locked_constrainedSizeForLayoutPass];
-#if YOGA
-    // This flag indicates to the Texture+Yoga code that this next layout is intended to be
-    // displayed (vs. just for measurement). This will cause it to call setNeedsLayout on any nodes
-    // whose layout changes as a result of the Yoga recalculation. This is necessary because a
-    // change in one Yoga node can change the layout for any other node in the tree.
-    self.willApplyNextYogaCalculatedLayout = YES;
-#endif
     ASLayout *layout = [self calculateLayoutThatFits:constrainedSize
                                     restrictedToSize:self.style.size
                                 relativeToParentSize:boundsSizeForLayout];
-#if YOGA
-    self.willApplyNextYogaCalculatedLayout = NO;
-#endif
     nextLayout = ASDisplayNodeLayout(layout, constrainedSize, boundsSizeForLayout, version);
     // Now that the constrained size of pending layout might have been reused, the layout is useless
     // Release it and any orphaned subnodes it retains
@@ -446,23 +400,13 @@ ASLayoutElementStyleExtensibilityForwarding
       __instanceLock__.lock();
     }
 
-    // If we request that our root layout we may generate a new _pendingDisplayNodeLayout.layout which has
-    // requestedLayoutFromAbove set to NO. If the pending layout has a different constrained size than nextLayout's
-    // and the layout sizes don't change we could end up back here asking the root to layout again causing an
-    // infinite layout loop. Instead, we nil out the _pendingDisplayNodeLayout.layout here because it can be
-    // considered an undesired artifact of the layout request. nextLayout will become _calculatedDisplayNodeLayout
-    // when the pending layout transition which will be created later in this method is applied.
-    // We will use _calculatedLayout the next time around, so requestedLayoutFromAbove will be set to YES and we
-    // will break out of this layout loop.
-    _pendingDisplayNodeLayout.layout = nil;
-    
     // Update the layout's version here because _u_setNeedsLayoutFromAbove calls __setNeedsLayout which in turn increases _layoutVersion
     // Failing to do this will cause the layout to be invalid immediately
     nextLayout.version = _layoutVersion;
   }
 
   // Prepare to transition to nextLayout
-  ASDisplayNodeAssertNotNil(nextLayout.layout, @"nextLayout.layout should not be nil! %@", self);
+  ASDisplayNodeAssertNotNil(nextLayout.layout, @"nextLayout->layout should not be nil! %@", self);
   _pendingLayoutTransition = [[ASLayoutTransition alloc] initWithNode:self
                                                         pendingLayout:nextLayout
                                                        previousLayout:_calculatedDisplayNodeLayout];
@@ -476,7 +420,7 @@ ASLayoutElementStyleExtensibilityForwarding
 
 - (ASSizeRange)_constrainedSizeForLayoutPass
 {
-  MutexLocker l(__instanceLock__);
+  ASDN::MutexLocker l(__instanceLock__);
   return [self _locked_constrainedSizeForLayoutPass];
 }
 
@@ -513,10 +457,10 @@ ASLayoutElementStyleExtensibilityForwarding
 {
   ASDisplayNodeAssertThreadAffinity(self);
   DISABLED_ASAssertUnlocked(__instanceLock__);
-  
+
   ASLayout *layout;
   {
-    MutexLocker l(__instanceLock__);
+    ASDN::MutexLocker l(__instanceLock__);
     if (_calculatedDisplayNodeLayout.version < _layoutVersion) {
       return;
     }
@@ -546,14 +490,14 @@ ASLayoutElementStyleExtensibilityForwarding
 
 - (BOOL)automaticallyManagesSubnodes
 {
-  MutexLocker l(__instanceLock__);
-  return _flags.automaticallyManagesSubnodes;
+  ASDN::MutexLocker l(__instanceLock__);
+  return _automaticallyManagesSubnodes;
 }
 
 - (void)setAutomaticallyManagesSubnodes:(BOOL)automaticallyManagesSubnodes
 {
-  MutexLocker l(__instanceLock__);
-  _flags.automaticallyManagesSubnodes = automaticallyManagesSubnodes;
+  ASDN::MutexLocker l(__instanceLock__);
+  _automaticallyManagesSubnodes = automaticallyManagesSubnodes;
 }
 
 @end
@@ -565,7 +509,7 @@ ASLayoutElementStyleExtensibilityForwarding
 
 - (BOOL)_isLayoutTransitionInvalid
 {
-  MutexLocker l(__instanceLock__);
+  ASDN::MutexLocker l(__instanceLock__);
   return [self _locked_isLayoutTransitionInvalid];
 }
 
@@ -617,7 +561,7 @@ ASLayoutElementStyleExtensibilityForwarding
 {
   ASDisplayNodeAssertMainThread();
   as_activity_create_for_scope("Transition node layout");
-  os_log_debug(ASLayoutLog(), "Transition layout for %@ sizeRange %@ anim %d asyncMeasure %d", self, NSStringFromASSizeRange(constrainedSize), animated, shouldMeasureAsync);
+  as_log_debug(ASLayoutLog(), "Transition layout for %@ sizeRange %@ anim %d asyncMeasure %d", self, NSStringFromASSizeRange(constrainedSize), animated, shouldMeasureAsync);
   
   if (constrainedSize.max.width <= 0.0 || constrainedSize.max.height <= 0.0) {
     // Using CGSizeZero for the sizeRange can cause negative values in client layout code.
@@ -627,7 +571,7 @@ ASLayoutElementStyleExtensibilityForwarding
   }
     
   {
-    MutexLocker l(__instanceLock__);
+    ASDN::MutexLocker l(__instanceLock__);
 
     // Check if we are a subnode in a layout transition.
     // In this case no measurement is needed as we're part of the layout transition.
@@ -677,7 +621,7 @@ ASLayoutElementStyleExtensibilityForwarding
     NSUInteger newLayoutVersion = _layoutVersion;
     ASLayout *newLayout;
     {
-      ASScopedLockSelfOrToRoot();
+      ASDN::MutexLocker l(__instanceLock__);
 
       ASLayoutElementContext *ctx = [[ASLayoutElementContext alloc] init];
       ctx.transitionID = transitionID;
@@ -709,7 +653,7 @@ ASLayoutElementStyleExtensibilityForwarding
       {
         // Grab __instanceLock__ here to make sure this transition isn't invalidated
         // right after it passed the validation test and before it proceeds
-        MutexLocker l(__instanceLock__);
+        ASDN::MutexLocker l(__instanceLock__);
         
         // Update calculated layout
         const auto previousLayout = _calculatedDisplayNodeLayout;
@@ -779,37 +723,37 @@ ASLayoutElementStyleExtensibilityForwarding
 
 - (void)setDefaultLayoutTransitionDuration:(NSTimeInterval)defaultLayoutTransitionDuration
 {
-  MutexLocker l(__instanceLock__);
+  ASDN::MutexLocker l(__instanceLock__);
   _defaultLayoutTransitionDuration = defaultLayoutTransitionDuration;
 }
 
 - (NSTimeInterval)defaultLayoutTransitionDuration
 {
-  MutexLocker l(__instanceLock__);
+  ASDN::MutexLocker l(__instanceLock__);
   return _defaultLayoutTransitionDuration;
 }
 
 - (void)setDefaultLayoutTransitionDelay:(NSTimeInterval)defaultLayoutTransitionDelay
 {
-  MutexLocker l(__instanceLock__);
+  ASDN::MutexLocker l(__instanceLock__);
   _defaultLayoutTransitionDelay = defaultLayoutTransitionDelay;
 }
 
 - (NSTimeInterval)defaultLayoutTransitionDelay
 {
-  MutexLocker l(__instanceLock__);
+  ASDN::MutexLocker l(__instanceLock__);
   return _defaultLayoutTransitionDelay;
 }
 
 - (void)setDefaultLayoutTransitionOptions:(UIViewAnimationOptions)defaultLayoutTransitionOptions
 {
-  MutexLocker l(__instanceLock__);
+  ASDN::MutexLocker l(__instanceLock__);
   _defaultLayoutTransitionOptions = defaultLayoutTransitionOptions;
 }
 
 - (UIViewAnimationOptions)defaultLayoutTransitionOptions
 {
-  MutexLocker l(__instanceLock__);
+  ASDN::MutexLocker l(__instanceLock__);
   return _defaultLayoutTransitionOptions;
 }
 
@@ -971,40 +915,35 @@ ASLayoutElementStyleExtensibilityForwarding
     return;
   }
 
-  MutexLocker l(__instanceLock__);
-  NSArray<ASLayout *> *sublayouts = _calculatedDisplayNodeLayout.layout.sublayouts;
-  unowned ASLayout *cSublayouts[sublayouts.count];
-  [sublayouts getObjects:cSublayouts range:NSMakeRange(0, AS_ARRAY_SIZE(cSublayouts))];
+  NSArray *subnodes = [self subnodes];
+  NSArray *sublayouts = _calculatedDisplayNodeLayout.layout.sublayouts;
 
-  // Fast-path if we are in the correct state (likely).
-  if (_subnodes.count == AS_ARRAY_SIZE(cSublayouts)) {
-    NSUInteger i = 0;
-    BOOL matches = YES;
-    for (ASDisplayNode *subnode in _subnodes) {
-      if (subnode != cSublayouts[i].layoutElement) {
-        matches = NO;
-      }
-      i++;
-    }
-    if (matches) {
-      return;
-    }
+  const auto currentSubnodes = [[NSHashTable alloc] initWithOptions:NSHashTableObjectPointerPersonality
+                                                     capacity:subnodes.count];
+  const auto layoutSubnodes  = [[NSHashTable alloc] initWithOptions:NSHashTableObjectPointerPersonality
+                                                     capacity:sublayouts.count];;
+  for (ASDisplayNode *subnode in subnodes) {
+    [currentSubnodes addObject:subnode];
   }
 
-  NSArray<ASDisplayNode *> *layoutNodes = ASArrayByFlatMapping(sublayouts, ASLayout *layout, (ASDisplayNode *)layout.layoutElement);
-  NSIndexSet *insertions, *deletions;
-  [_subnodes asdk_diffWithArray:layoutNodes insertions:&insertions deletions:&deletions];
-  if (insertions.count > 0) {
-    NSLog(@"Warning: node's layout includes subnode that has not been added: node = %@, subnodes = %@, subnodes in layout = %@", self, _subnodes, layoutNodes);
+  for (ASLayout *sublayout in sublayouts) {
+    id <ASLayoutElement> layoutElement = sublayout.layoutElement;
+    ASDisplayNodeAssert([layoutElement isKindOfClass:[ASDisplayNode class]],
+                        @"All calculatedLayouts should be flattened and only contain nodes!");
+    [layoutSubnodes addObject:(ASDisplayNode *)layoutElement];
   }
 
-  // Remove any nodes that are in the tree but should not be.
-  // Go in reverse order so we don't shift our indexes.
-  if (deletions) {
-    for (NSUInteger i = deletions.lastIndex; i != NSNotFound; i = [deletions indexLessThanIndex:i]) {
-      NSLog(@"Automatically removing orphaned subnode %@, from parent %@", _subnodes[i], self);
-      [_subnodes[i] removeFromSupernode];
-    }
+  // Verify that all subnodes that occur in the current ASLayout tree are present in .subnodes array.
+  if ([layoutSubnodes isSubsetOfHashTable:currentSubnodes] == NO) {
+    // Note: This should be converted to an assertion after confirming it is rare.
+    NSLog(@"Warning: node's layout includes subnodes that have not been added: node = %@, subnodes = %@, subnodes in layout = %@", self, currentSubnodes, layoutSubnodes);
+  }
+
+  // Verify that everything in the .subnodes array is present in the ASLayout tree (and correct it if not).
+  [currentSubnodes minusHashTable:layoutSubnodes];
+  for (ASDisplayNode *orphanedSubnode in currentSubnodes) {
+    NSLog(@"Automatically removing orphaned subnode %@, from parent %@", orphanedSubnode, self);
+    [orphanedSubnode removeFromSupernode];
   }
 }
 
@@ -1022,12 +961,12 @@ ASLayoutElementStyleExtensibilityForwarding
   [self calculatedLayoutDidChange];
 
   // Grab lock after calling out to subclass
-  MutexLocker l(__instanceLock__);
+  ASDN::MutexLocker l(__instanceLock__);
 
   // We generate placeholders at -layoutThatFits: time so that a node is guaranteed to have a placeholder ready to go.
   // This is also because measurement is usually asynchronous, but placeholders need to be set up synchronously.
   // First measurement is guaranteed to be before the node is onscreen, so we can create the image async. but still have it appear sync.
-  if (_flags.placeholderEnabled && !_placeholderImage && [self _locked_displaysAsynchronously]) {
+  if (_placeholderEnabled && !_placeholderImage && [self _locked_displaysAsynchronously]) {
     
     // Zero-sized nodes do not require a placeholder.
     CGSize layoutSize = _calculatedDisplayNodeLayout.layout.size;
@@ -1056,7 +995,7 @@ ASLayoutElementStyleExtensibilityForwarding
 
 - (void)_setCalculatedDisplayNodeLayout:(const ASDisplayNodeLayout &)displayNodeLayout
 {
-  MutexLocker l(__instanceLock__);
+  ASDN::MutexLocker l(__instanceLock__);
   [self _locked_setCalculatedDisplayNodeLayout:displayNodeLayout];
 }
 
@@ -1068,33 +1007,6 @@ ASLayoutElementStyleExtensibilityForwarding
   ASDisplayNodeAssertTrue(displayNodeLayout.layout.size.height >= 0.0);
   
   _calculatedDisplayNodeLayout = displayNodeLayout;
-}
-
-@end
-
-#pragma mark -
-#pragma mark - ASDisplayNode (YogaLayout)
-
-@implementation ASDisplayNode (YogaLayout)
-
-- (BOOL)locked_shouldLayoutFromYogaRoot {
-#if YOGA
-  YGNodeRef yogaNode = _style.yogaNode;
-  BOOL hasYogaParent = (_yogaParent != nil);
-  BOOL hasYogaChildren = (_yogaChildren.count > 0);
-  BOOL usesYoga = (yogaNode != NULL && (hasYogaParent || hasYogaChildren));
-  if (usesYoga) {
-    if ([self shouldHaveYogaMeasureFunc] == NO) {
-      return YES;
-    } else {
-      return NO;
-    }
-  } else {
-    return NO;
-  }
-#else
-  return NO;
-#endif
 }
 
 @end
