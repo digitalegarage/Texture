@@ -300,12 +300,7 @@ static dispatch_once_t shared_init_predicate;
   // extra downloads isn't worth the effort of rechecking caches every single time. In order to provide
   // feedback to the consumer about whether images are cached, we can't simply make the cache a no-op and
   // check the cache as part of this download.
-  return [[self sharedPINRemoteImageManager] downloadImageWithURL:URL
-                                                          options:PINRemoteImageManagerDownloadOptionsSkipDecode | PINRemoteImageManagerDownloadOptionsIgnoreCache
-                                                         priority:pi_priority
-                                                    progressImage:nil
-                                                 progressDownload:progressDownload
-                                                       completion:imageCompletion];
+  return [[self sharedPINRemoteImageManager] downloadImageWithURL:URL options:PINRemoteImageManagerDownloadOptionsSkipDecode | PINRemoteImageManagerDownloadOptionsIgnoreCache progressDownload:progressDownload completion:imageCompletion];
 }
 
 - (void)cancelImageDownloadForIdentifier:(id)downloadIdentifier
@@ -348,9 +343,9 @@ static dispatch_once_t shared_init_predicate;
 - (id)alternateRepresentationWithData:(NSData *)data options:(PINRemoteImageManagerDownloadOptions)options
 {
 #if PIN_ANIMATED_AVAILABLE
-  if ([data pin_isAnimatedGIF]) {
-    return data;
-  }
+//  if ([data pin_isAnimatedGIF]) {
+//    return data;
+//  }
 #if PIN_WEBP_AVAILABLE
   else if ([data pin_isAnimatedWebP]) {
       return data;
