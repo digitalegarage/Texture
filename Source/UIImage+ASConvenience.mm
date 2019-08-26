@@ -9,8 +9,6 @@
 
 #import <AsyncDisplayKit/UIImage+ASConvenience.h>
 #import <AsyncDisplayKit/ASGraphicsContext.h>
-#import <AsyncDisplayKit/ASInternalHelpers.h>
-#import <AsyncDisplayKit/ASAssert.h>
 
 #pragma mark - ASDKFastImageNamed
 
@@ -32,7 +30,7 @@ UIImage *cachedImageNamed(NSString *imageName, UITraitCollection *traitCollectio
     NSString *imageKey = imageName;
     if (traitCollection) {
       char imageKeyBuffer[256];
-      snprintf(imageKeyBuffer, sizeof(imageKeyBuffer), "%s|%ld|%ld", imageName.UTF8String, (long)traitCollection.horizontalSizeClass, (long)traitCollection.verticalSizeClass);
+      snprintf(imageKeyBuffer, sizeof(imageKeyBuffer), "%s|%ld|%ld|%ld", imageName.UTF8String, (long)traitCollection.horizontalSizeClass, (long)traitCollection.verticalSizeClass, (long)traitCollection.userInterfaceStyle);
       imageKey = [NSString stringWithUTF8String:imageKeyBuffer];
     }
 
