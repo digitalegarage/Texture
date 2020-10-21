@@ -2,9 +2,9 @@
 title: Threading
 layout: docs
 permalink: /development/threading.html
+prevPage: how-to-debug.html
+nextPage: node-lifecycle.html
 ---
-
-# Threading
 
 ## At a glance
 
@@ -250,25 +250,6 @@ Since this lock is also shared, it will prevent other routines from entering unt
 
 __Method 2__
 
-An alternative method is to manage the duration of the lock hold manually rather than using the runtime and scope. You must remember to unlock.
-
-```
-@implementation ASDeallocQueue {
-  ASDN::Mutex _lock;
-}
-
-- (void)releaseObjectInBackground:(id  _Nullable __strong *)objectPtr
-{
-  NSParameterAssert(objectPtr != NULL); // do I actually need to lock ?
-  // other conditions or non-shared tasks
-  _lock.lock();
-  sharedObject.modify(newData);
-  _lock.unlock();
-}
-```
-
-__Method 3__
-
 `ASThread` provides `ASLockScopeSelf()`. This is a convenience over `ASLockScopeUnowned(<NSLocking>)`. This will unlock itself once the scope in which the lock was created is released. Only use this when you are confident that the lock should remain until scope is complete. You can only have one lock defined for `self`, thus it will block all other branches.
 
 ```
@@ -311,7 +292,6 @@ API | Description |
 `ASDisplayNodeAssertMainThread();` | Place this at the start of the every function definition that performs work synchronously on the main thread.
 `ASPerformBlockOnMainThread(block)` | If on main thread already, run block synchronously, otherwise use `dispatch_async(dispatch_get_main_queue(block))`
 `ASPerformMainThreadDeallocation(&object)` | Schedule async deallocation of UIKit components
-`ASPerformBackgroundDeallocation(&object)` | Schedule async deallocation of __non-UIKit__ objects
 `ASPerformBlockOnBackgroundThread(block)` | Perform work on background
 
 
@@ -340,21 +320,21 @@ This is a `dispatch_queue_t` that is privately held by each UICollectionView. Th
 __Describing the Batch Update flow__
 
 <!-- <img src="/static/images/development/threading1.png"> -->
-![Threading1](/docs/static/images/development/threading1.png)
+![Threading1](/static/images/development/threading1.png)
 
 Starting with a simple example, let's say everything was on the main thread. The app would then appear unresponsive to the user until the entire flow finished. This is because the main thread's run loop (which receives operating system events for input) and the main thread dispatch queue compete for service time on the main thread. Execution goes back and forth between the run loop and the main dispatch queue while work is present in either. Now you can see that the work your code wants to schedule competes for time with system and user input events.
 
 Let's identify the items that are not critical for execution on the main thread and dispatch those as blocks onto a background thread.
 
 <!-- <img src="/static/images/development/threading2.png"> -->
-![Threading2](/docs/static/images/development/threading2.png)
+![Threading2](/static/images/development/threading2.png)
 
 Ok, this is starting to look better. The main thread now only performs the minimal amount of work. This means the app will feel responsive to the user as it is able to consume Run Loop events with little interruption. However, a lot of the background work is still being done serially in one long running operation. If the network is the longest running task in this sequence, you would want to make sure they get fired off as early as possible. Let's also introduce another condition, we have a NSTimer running which injects a "hint" cell into the collection view. This is to demonstrate how the editing transaction queue is consumed serially.
 
 The reason we must design the work to consume the editing transaction queue serially alongside the main queue is change sets must represent a transformation of the current data set in the collection view. This means that each time a `performBatchUpdate` is intended to be performed, it _must_ calculate using the latest data set used for display in the collection view. In this following image, this means that change sets can only be calculated from `A -> B`, and then when `performBatchUpdate` task is fully finished, another calculation can be done from `B -> C`. Consider data sets `B` and `C` coming in right after the other. If the queues consumed concurrently, then you would get a change set for `A -> B` and `A -> C`. The collection view will crash if a change set is requested for `A -> C`, while a `performBatchUpdate` is updating the collection view to reflect `A -> B` with a `A -> C` operation is queued. All this means that we create a pseudo-lock on the `editingTransactionQueue` by consuming it one operation at a time, either when the queue is empty or when an operation has finished as called by the completed `performBatchUpdate` invocation.
 
 <!-- <img src="/static/images/development/threading3.png"> -->
-![Threading3](/docs/static/images/development/threading3.png)
+![Threading3](/static/images/development/threading3.png)
 
 One small note is these diagrams are missing a representation of the main dispatch queue. Remember this is separate from the main thread. It is a data structure operated by GCD similarly to ASMainSerialQueue which handles execution to the main thread. All the work that goes from the background threads to the main thread is first put onto the main dispatch queue when using `dispatch_async(dispatch_get_main_queue())`.
 .

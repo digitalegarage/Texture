@@ -8,18 +8,14 @@
 //
 
 #import <AsyncDisplayKit/_ASDisplayView.h>
-#import <AsyncDisplayKit/_ASDisplayViewAccessiblity.h>
 
 #import <AsyncDisplayKit/_ASCoreAnimationExtras.h>
 #import <AsyncDisplayKit/_ASDisplayLayer.h>
 #import <AsyncDisplayKit/ASDisplayNodeInternal.h>
 #import <AsyncDisplayKit/ASDisplayNode+Convenience.h>
-#import <AsyncDisplayKit/ASDisplayNode+FrameworkPrivate.h>
 #import <AsyncDisplayKit/ASDisplayNode+Subclasses.h>
-#import <AsyncDisplayKit/ASInternalHelpers.h>
 #import <AsyncDisplayKit/ASLayout.h>
-#import <AsyncDisplayKit/ASObjectDescriptionHelpers.h>
-#import <AsyncDisplayKit/ASViewController.h>
+#import <AsyncDisplayKit/ASDKViewController.h>
 
 #pragma mark - _ASDisplayView
 
@@ -99,6 +95,24 @@
   return nodeAction;
 }
 
+- (void)willMoveToWindow:(UIWindow *)newWindow
+{
+  ASDisplayNode *node = _asyncdisplaykit_node; // Create strong reference to weak ivar.
+  BOOL visible = (newWindow != nil);
+  if (visible && !node.inHierarchy) {
+    [node __enterHierarchy];
+  }
+}
+
+- (void)didMoveToWindow
+{
+  ASDisplayNode *node = _asyncdisplaykit_node; // Create strong reference to weak ivar.
+  BOOL visible = (self.window != nil);
+  if (!visible && node.inHierarchy) {
+    [node __exitHierarchy];
+  }
+}
+
 - (void)willMoveToSuperview:(UIView *)newSuperview
 {
   // Keep the node alive while the view is in a view hierarchy.  This helps ensure that async-drawing views can always
@@ -162,7 +176,7 @@
   if (superview && node.viewControllerRoot) {
     UIViewController *vc = [node closestViewController];
 
-    ASDisplayNodeAssert(vc != nil && [vc isKindOfClass:[ASViewController class]] && ((ASViewController*)vc).node == node, @"This node was once used as a view controller's node. You should not reuse it without its view controller.");
+    ASDisplayNodeAssert(vc != nil && [vc isKindOfClass:[ASDKViewController class]] && ((ASDKViewController*)vc).node == node, @"This node was once used as a view controller's node. You should not reuse it without its view controller.");
   }
 #endif
 

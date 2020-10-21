@@ -9,11 +9,6 @@
 
 #import <AsyncDisplayKit/ASInternalHelpers.h>
 
-#import <UIKit/UIKit.h>
-
-#import <objc/runtime.h>
-#import <cmath>
-
 #import <AsyncDisplayKit/ASConfigurationInternal.h>
 #import <AsyncDisplayKit/ASRunLoopQueue.h>
 #import <AsyncDisplayKit/ASSignpost.h>
@@ -143,11 +138,6 @@ void ASPerformBlockOnBackgroundThread(void (^block)(void))
   } else {
     block();
   }
-}
-
-void ASPerformBackgroundDeallocation(id __strong _Nullable * _Nonnull object)
-{
-  [[ASDeallocQueue sharedDeallocationQueue] releaseObjectInBackground:object];
 }
 
 Class _Nullable ASGetClassFromType(const char  * _Nullable type)

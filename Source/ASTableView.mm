@@ -12,7 +12,6 @@
 #import <AsyncDisplayKit/_ASCoreAnimationExtras.h>
 #import <AsyncDisplayKit/_ASDisplayLayer.h>
 #import <AsyncDisplayKit/_ASHierarchyChangeSet.h>
-#import <AsyncDisplayKit/ASAssert.h>
 #import <AsyncDisplayKit/ASBatchFetching.h>
 #import <AsyncDisplayKit/ASCellNode+Internal.h>
 #import <AsyncDisplayKit/ASCollectionElement.h>
@@ -21,15 +20,16 @@
 #import <AsyncDisplayKit/ASDelegateProxy.h>
 #import <AsyncDisplayKit/ASDisplayNodeExtras.h>
 #import <AsyncDisplayKit/ASDisplayNode+FrameworkPrivate.h>
+#import <AsyncDisplayKit/ASDisplayNodeInternal.h>
 #import <AsyncDisplayKit/ASElementMap.h>
 #import <AsyncDisplayKit/ASInternalHelpers.h>
 #import <AsyncDisplayKit/ASLayout.h>
 #import <AsyncDisplayKit/ASTableNode+Beta.h>
 #import <AsyncDisplayKit/ASRangeController.h>
-#import <AsyncDisplayKit/ASEqualityHelpers.h>
 #import <AsyncDisplayKit/ASTableLayoutController.h>
-#import <AsyncDisplayKit/ASTableView+Undeprecated.h>
 #import <AsyncDisplayKit/ASBatchContext.h>
+#import <AsyncDisplayKit/ASTableView+Undeprecated.h>
+
 
 static NSString * const kCellReuseIdentifier = @"_ASTableViewCell";
 
@@ -116,12 +116,14 @@ static NSString * const kCellReuseIdentifier = @"_ASTableViewCell";
     self.selectionStyle = node.selectionStyle; 
     self.focusStyle = node.focusStyle;
     self.accessoryType = node.accessoryType;
-    self.tintColor = node.tintColor;
     
     // the following ensures that we clip the entire cell to it's bounds if node.clipsToBounds is set (the default)
     // This is actually a workaround for a bug we are seeing in some rare cases (selected background view
     // overlaps other cells if size of ASCellNode has changed.)
     self.clipsToBounds = node.clipsToBounds;
+
+    // If the cell node has been explicitly configured with a tint color, we can apply that directly to the cell view to preserve the previous behavior
+    self.tintColor = node->_tintColor;
   }
   
   [node __setSelectedFromUIKit:self.selected];
@@ -370,12 +372,6 @@ static NSString * const kCellReuseIdentifier = @"_ASTableViewCell";
   if (!ASActivateExperimentalFeature(ASExperimentalCollectionTeardown)) {
     [self setAsyncDelegate:nil];
     [self setAsyncDataSource:nil];
-  }
-
-  // Data controller & range controller may own a ton of nodes, let's deallocate those off-main
-  if (ASActivateExperimentalFeature(ASExperimentalOOMBackgroundDeallocDisable) == NO) {
-    ASPerformBackgroundDeallocation(&_dataController);
-    ASPerformBackgroundDeallocation(&_rangeController);
   }
 }
 
@@ -1500,13 +1496,13 @@ static NSString * const kCellReuseIdentifier = @"_ASTableViewCell";
   if (_asyncDelegateFlags.tableNodeWillBeginBatchFetch) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
       GET_TABLENODE_OR_RETURN(tableNode, (void)0);
-      [_asyncDelegate tableNode:tableNode willBeginBatchFetchWithContext:_batchContext];
+      [self->_asyncDelegate tableNode:tableNode willBeginBatchFetchWithContext:self->_batchContext];
     });
   } else if (_asyncDelegateFlags.tableViewWillBeginBatchFetch) {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-      [_asyncDelegate tableView:self willBeginBatchFetchWithContext:_batchContext];
+      [self->_asyncDelegate tableView:self willBeginBatchFetchWithContext:self->_batchContext];
 #pragma clang diagnostic pop
     });
   }
@@ -1564,7 +1560,7 @@ static NSString * const kCellReuseIdentifier = @"_ASTableViewCell";
       updates();
       [super reloadData];
       // Flush any range changes that happened as part of submitting the reload.
-      [_rangeController updateIfNeeded];
+      [self->_rangeController updateIfNeeded];
       [self _scheduleCheckForBatchFetchingForNumberOfChanges:1];
       [changeSet executeCompletionHandlerWithFinished:YES];
     });
@@ -1682,7 +1678,7 @@ static NSString * const kCellReuseIdentifier = @"_ASTableViewCell";
   LOG(@"--- UITableView endUpdates");
   ASPerformBlockWithoutAnimation(!changeSet.animated, ^{
     [super endUpdates];
-    [_rangeController updateIfNeeded];
+    [self->_rangeController updateIfNeeded];
     [self _scheduleCheckForBatchFetchingForNumberOfChanges:numberOfUpdates];
   });
   if (shouldAdjustContentOffset) {
@@ -1787,7 +1783,7 @@ static NSString * const kCellReuseIdentifier = @"_ASTableViewCell";
     if (node.interactionDelegate == nil) {
       node.interactionDelegate = strongSelf;
     }
-    if (_inverted) {
+    if (self->_inverted) {
         node.transform = CATransform3DMakeScale(1, -1, 1) ;
     }
     return node;

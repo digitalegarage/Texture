@@ -10,13 +10,9 @@
 #import <AsyncDisplayKit/ASAvailability.h>
 #import <AsyncDisplayKit/ASConfigurationInternal.h>
 #import <AsyncDisplayKit/ASLog.h>
-#import <AsyncDisplayKit/ASObjectDescriptionHelpers.h>
 #import <AsyncDisplayKit/ASRunLoopQueue.h>
 #import <AsyncDisplayKit/ASThread.h>
 #import <AsyncDisplayKit/ASSignpost.h>
-#import <QuartzCore/QuartzCore.h>
-#import <cstdlib>
-#import <deque>
 #import <vector>
 
 #define ASRunLoopQueueLoggingEnabled 0
@@ -30,67 +26,6 @@ static void runLoopSourceCallback(void *info) {
   NSLog(@"<%@> - Called runLoopSourceCallback", info);
 #endif
 }
-
-#pragma mark - ASDeallocQueue
-
-@implementation ASDeallocQueue {
-  std::vector<CFTypeRef> _queue;
-  AS::Mutex _lock;
-}
-
-+ (ASDeallocQueue *)sharedDeallocationQueue NS_RETURNS_RETAINED
-{
-  static ASDeallocQueue *deallocQueue = nil;
-  static dispatch_once_t onceToken;
-  dispatch_once(&onceToken, ^{
-    deallocQueue = [[ASDeallocQueue alloc] init];
-  });
-  return deallocQueue;
-}
-
-- (void)dealloc
-{
-  ASDisplayNodeFailAssert(@"Singleton should not dealloc.");
-}
-
-- (void)releaseObjectInBackground:(id  _Nullable __strong *)objectPtr
-{
-  NSParameterAssert(objectPtr != NULL);
-  
-  // Cast to CFType so we can manipulate retain count manually.
-  const auto cfPtr = (CFTypeRef *)(void *)objectPtr;
-  if (!cfPtr || !*cfPtr) {
-    return;
-  }
-  
-  _lock.lock();
-  const auto isFirstEntry = _queue.empty();
-  // Push the pointer into our queue and clear their pointer.
-  // This "steals" the +1 from ARC and nils their pointer so they can't
-  // access or release the object.
-  _queue.push_back(*cfPtr);
-  *cfPtr = NULL;
-  _lock.unlock();
-  
-  if (isFirstEntry) {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.100 * NSEC_PER_SEC)), dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0), ^{
-      [self drain];
-    });
-  }
-}
-
-- (void)drain
-{
-  _lock.lock();
-  const auto q = std::move(_queue);
-  _lock.unlock();
-  for (CFTypeRef ref : q) {
-    // NOTE: Could check that retain count is 1 and retry later if not.
-    CFRelease(ref);
-  }
-}
-
-@end
 
 @implementation ASAbstractRunLoopQueue
 
@@ -149,8 +84,8 @@ static void runLoopSourceCallback(void *info) {
     }
     
     // Self is guaranteed to outlive the observer.  Without the high cost of a weak pointer,
-    // __unsafe_unretained allows us to avoid flagging the memory cycle detector.
-    __unsafe_unretained __typeof__(self) weakSelf = self;
+    // unowned(__unsafe_unretained) allows us to avoid flagging the memory cycle detector.
+    unowned __typeof__(self) weakSelf = self;
     void (^handlerBlock) (CFRunLoopObserverRef observer, CFRunLoopActivity activity) = ^(CFRunLoopObserverRef observer, CFRunLoopActivity activity) {
       [weakSelf processQueue];
     };
@@ -233,7 +168,7 @@ static void runLoopSourceCallback(void *info) {
        * object will be added to the autorelease pool. If the queue is strong,
        * it will retain the object until we transfer it (retain it) in itemsToProcess.
        */
-      __unsafe_unretained id ptr = (__bridge id)[_internalQueue pointerAtIndex:i];
+      unowned id ptr = (__bridge id)[_internalQueue pointerAtIndex:i];
       if (ptr != nil) {
         foundItemCount++;
         if (hasExecutionBlock) {
@@ -263,7 +198,7 @@ static void runLoopSourceCallback(void *info) {
     as_activity_scope_verbose(as_activity_create("Process run loop queue batch", _rootActivity, OS_ACTIVITY_FLAG_DEFAULT));
     const auto itemsEnd = itemsToProcess.cend();
     for (auto iterator = itemsToProcess.begin(); iterator < itemsEnd; iterator++) {
-      __unsafe_unretained id value = *iterator;
+      unowned id value = *iterator;
       _queueConsumer(value, isQueueDrained && iterator == itemsEnd - 1);
       as_log_verbose(ASDisplayLog(), "processed %@", value);
     }
@@ -378,8 +313,8 @@ dispatch_once_t _ASSharedCATransactionQueueOnceToken;
     }
 
     // Self is guaranteed to outlive the observer.  Without the high cost of a weak pointer,
-    // __unsafe_unretained allows us to avoid flagging the memory cycle detector.
-    __unsafe_unretained __typeof__(self) weakSelf = self;
+    // unowned(__unsafe_unretained) allows us to avoid flagging the memory cycle detector.
+    unowned __typeof__(self) weakSelf = self;
     _preTransactionObserver = CFRunLoopObserverCreateWithHandler(NULL, kCFRunLoopBeforeWaiting, true, kASASCATransactionQueueOrder, ^(CFRunLoopObserverRef observer, CFRunLoopActivity activity) {
       while (!weakSelf->_internalQueue.empty()) {
         [weakSelf processQueue];

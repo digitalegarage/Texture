@@ -16,7 +16,6 @@
 #import <AsyncDisplayKit/ASDisplayNode+Subclasses.h>
 #import <AsyncDisplayKit/ASDisplayNodeExtras.h>
 #import <AsyncDisplayKit/ASGraphicsContext.h>
-#import <AsyncDisplayKit/ASInsetLayoutSpec.h>
 #import <AsyncDisplayKit/ASInternalHelpers.h>
 #import <AsyncDisplayKit/ASLayout.h>
 #import <AsyncDisplayKit/ASThread.h>
@@ -222,7 +221,7 @@
                     
                     CGRect finalImageRect = CGRectMake(0, 0, image.size.width, image.size.height);
                     
-                    image = ASGraphicsCreateImageWithOptions(image.size, YES, image.scale, image, nil, ^{
+                    image = ASGraphicsCreateImage(strongSelf.primitiveTraitCollection, image.size, YES, image.scale, image, nil, ^{
                       [image drawAtPoint:CGPointZero];
 
                       UIImage *pinImage;
